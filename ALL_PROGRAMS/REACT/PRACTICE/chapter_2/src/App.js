@@ -244,7 +244,7 @@ function App() {
     },
   ];
 
-  const [videos , setVideos] = useState([channel])
+  const [videos , setVideos] = useState([...channel])
 
 
 
