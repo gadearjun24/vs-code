@@ -1,9 +1,21 @@
 // import fs from 'fs';
-import {useState} from 'react'
+import { useState } from "react";
 import Video from "./components/Video";
 import "./App.css";
 
 function App() {
+  function handleAddClick() {
+    var newData = {
+      title: "Mongodb Tutorial",
+      views: "2k",
+      verified: "true",
+      channel_name: "Tech Savvy",
+      image: "https://via.placeholder.com/600x400.png?text=Mongodb+Tutorial",
+    };
+    console.log("title");
+    
+    setVideos([...channel, newData]);
+  }
 
   var channel = [
     {
@@ -244,34 +256,12 @@ function App() {
     },
   ];
 
-  const [videos , setVideos] = useState([...channel])
-
-
-
-function handleAddClick()
-{
- var newData = {
-    title: "Mongodb Tutorial",
-    views: "2k",
-    verified: "true",
-    channel_name: "Tech Savvy",
-    image: "https://via.placeholder.com/600x400.png?text=Mongodb+Tutorial",
-  }
-
-  setVideos([...channel , newData]);
-
-
-}
-
-
-
+  const [videos, setVideos] = useState([...channel]);
 
   return (
-
     <>
-
-<button onClick = {handleAddClick}>Add</button>
-<br/>
+      <button onClick={handleAddClick}>Add</button>
+      <br />
       {videos.map((ele, index) => {
         return (
           <Video
