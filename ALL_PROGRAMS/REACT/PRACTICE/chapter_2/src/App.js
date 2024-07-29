@@ -8,12 +8,11 @@ function App() {
     var newData = {
       title: "Mongodb Tutorial",
       views: "2k",
-      verified: "true",
+      verified: "false",
       channel_name: "Tech Savvy",
       image: "https://via.placeholder.com/600x400.png?text=Mongodb+Tutorial",
     };
-    console.log("title");
-    
+
     setVideos([...channel, newData]);
   }
 

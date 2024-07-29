@@ -1,0 +1,38 @@
+.container {
+  margin: auto;
+  padding-top: 30px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+}
+
+.search {
+  background-color: white;
+  padding-left: 10px;
+  border-radius: 15px;
+  border: 2px solid white;
+  color: black;
+  width: 350px;
+  height: 35px;
+  font-size: 17px;
+  outline: #008cff;
+  border-bottom-left-radius: 0px;
+  border-bottom-right-radius: 0px;
+}
+.search::placeholder {
+  color: black;
+}
+
+.suggetion {
+  width: 100%;
+  font-size: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.suggetion span {
+  background-color: white;
+  width: 350px;
+  height: 35px;
+}
