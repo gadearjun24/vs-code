@@ -9,13 +9,13 @@
 .search {
   background-color: white;
   padding-left: 10px;
-  border-radius: 15px;
   border: 2px solid white;
   color: black;
   width: 350px;
   height: 35px;
   font-size: 17px;
   outline: #008cff;
+  border-radius: 15px;
   border-bottom-left-radius: 0px;
   border-bottom-right-radius: 0px;
 }
@@ -23,16 +23,25 @@
   color: black;
 }
 
-.suggetion {
-  width: 100%;
-  font-size: 20px;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
+/* .suggetion {
+} */
 
 .suggetion span {
+  margin: auto;
+  border: 2px solid white;
+  padding-left: 10px;
+  font-size: 20px;
+  display: block;
   background-color: white;
-  width: 350px;
+  width: 352px;
   height: 35px;
+}
+
+.suggetion span:hover {
+  background-color: hsla(0, 1%, 75%, 0.6);
+}
+
+.suggetion span:nth-child(3) {
+  border-bottom-left-radius: 15px;
+  border-bottom-right-radius: 15px;
 }
