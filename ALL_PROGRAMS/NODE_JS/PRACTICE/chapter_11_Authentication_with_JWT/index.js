@@ -3,10 +3,12 @@ const express = require("express");
 const mongoose = require("mongoose");
 const productRouter = require("./routers/products");
 const userRouter = require("./routers/users");
+const cors = require("cors");
 
 const server = express();
 
 // Middle-wares=>
+server.use(cors());
 server.use(express.json());
 server.use("/api/products/", productRouter.router);
 server.use("/api/users/", userRouter.router);
