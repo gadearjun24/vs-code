@@ -1,0 +1,47 @@
+
+.container {
+  margin: auto;
+  margin-top: 25vh;
+  width: 350px;
+  height: 250px;
+  background-color: white;
+  border-radius: 10px;
+  padding: 20px;
+  border: 2px solid yellow;
+  box-shadow: 10px 10px 10px black;
+}
+
+.container label {
+  color: black;
+  background-color: white;
+  font-size: 18px;
+}
+
+.container input {
+  color: black;
+  background-color: white;
+  font-size: 16px;
+  width: 90%;
+  border-radius: 10px;
+  padding: 5px;
+}
+
+.btn {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 60%;
+  background-color: white;
+}
+
+.container button {
+  color: white;
+  background-color: black;
+  border-radius: 10px;
+  border: 1px solid yellow;
+  width: max-content;
+  height: max-content;
+  padding: 7px 13px;
+  font-size: 18px;
+}
