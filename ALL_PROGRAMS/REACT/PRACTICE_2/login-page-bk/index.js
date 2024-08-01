@@ -6,9 +6,6 @@ require("dotenv").config();
 
 const server = express();
 
-
-
-
 // middle ware =>
 server.use(cors());
 server.use(express.json());
@@ -28,6 +25,6 @@ function mongooseConnection() {
 mongooseConnection();
 
 // server connection =>
-server.listen(process.env.PORT, () => {
+server.listen(process.env.PORT , () => {
   console.log(`server connected to ${process.env.PORT}  port`);
 });
