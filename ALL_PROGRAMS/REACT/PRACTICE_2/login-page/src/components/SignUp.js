@@ -1,7 +1,10 @@
+import { useNavigate } from "react-router-dom";
 import "./SignUp.css";
 import { useState } from "react";
 
 function SignUp() {
+  const navigate = useNavigate();
+
   const [info, setInfo] = useState({});
   const [values, setValues] = useState({});
 
@@ -12,6 +15,10 @@ function SignUp() {
   function handelClick() {
     setValues(info);
     console.log(values);
+  }
+
+  function handleSignUpClick(e) {
+    navigate("/login");
   }
 
   return (
@@ -34,6 +41,7 @@ function SignUp() {
         ></input>
         <div className="btn">
           <button onClick={handelClick}>Sign Up</button>
+          <label onClick={handleSignUpClick}>already you have account?</label>
         </div>
       </div>
     </>

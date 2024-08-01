@@ -1,4 +1,3 @@
-
 .container {
   margin: auto;
   margin-top: 25vh;
@@ -33,9 +32,10 @@
   align-items: center;
   height: 60%;
   background-color: white;
+  flex-direction: column;
 }
 
-.container button {
+button {
   color: white;
   background-color: black;
   border-radius: 10px;
@@ -44,4 +44,9 @@
   height: max-content;
   padding: 7px 13px;
   font-size: 18px;
+  cursor: pointer;
+}
+.btn label {
+  color: blue;
+  cursor: pointer;
 }
