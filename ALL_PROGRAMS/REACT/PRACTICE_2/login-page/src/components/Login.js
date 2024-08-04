@@ -19,6 +19,7 @@ function Login() {
       if (res.status === 200) {
         console.log(res.data);
         localStorage.setItem("token", res.data[1].token);
+        navigate("/dashboard");
       }
     } catch (err) {
       console.log({ err });

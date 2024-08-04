@@ -43,3 +43,25 @@ exports.login = async (req, res) => {
     res.json({ err });
   }
 };
+
+exports.verifyUser = async (req, res) => {
+  try {
+    const token = req.body.token;
+    // console.log(token);
+
+    const verify = jwt.verify(token, "sk");
+    console.log(verify);
+
+    // res.json(token);
+
+    if (verify) {
+      res.json(true);
+    }
+    else
+    {
+      res.json(false);
+    }
+  } catch (err) {
+    res.json(false);
+  }
+};

@@ -22,9 +22,10 @@ function mongooseConnection() {
       console.log({ err });
     });
 }
+
 mongooseConnection();
 
 // server connection =>
-server.listen(process.env.PORT , () => {
+server.listen(process.env.PORT, () => {
   console.log(`server connected to ${process.env.PORT}  port`);
 });

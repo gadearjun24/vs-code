@@ -1,23 +1,46 @@
-// import { useNavigate , BrowserRouter as Router , Route ,Routes , Link , Navigate } from "react-router-dom";
-import { useNavigate } from "react-router-dom";
 import "./App.css";
 import "./components/SignUp.css";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+import SignUp from "./components/SignUp";
+import Login from "./components/Login";
+import Dashboard from "./components/Dashboard";
+import Home from "./components/Home";
+import axios from "axios";
+import { useState } from "react";
 
 function App() {
-  const navigate = useNavigate();
+  const [verify, setVerify] = useState(false);
+  async function fetchData() {
+    const token = localStorage.getItem("token");
+    // console.log(token);
 
-  function handleClick(e) {
-    navigate("/login");
+    const res = await axios.post(
+      "https://ominous-disco-r4g77g74rjrqhwqq6-8080.app.github.dev/users/verify",
+      { token: token },
+      {
+        header: {
+          "Content-Type": "Application/json",
+        },
+      }
+    );
+
+    setVerify(res.data);
   }
+  fetchData();
 
   return (
     <>
-      <center>
-        <h1>WELCOME</h1>
-        <br />
-        <br />
-        <button onClick={handleClick}>Login</button>
-      </center>
+      <Router>
+        <Routes>
+          <Route path="/" element={<Home />}></Route>
+          <Route path="/signup" element={<SignUp />}></Route>
+          <Route path="/login" element={<Login />}></Route>
+          <Route
+            path="/dashboard"
+            element={<Dashboard verify={verify} fetchData={fetchData} />}
+          ></Route>
+        </Routes>
+      </Router>
     </>
   );
 }
