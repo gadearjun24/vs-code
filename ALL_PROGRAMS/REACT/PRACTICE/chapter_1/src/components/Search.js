@@ -9,31 +9,17 @@ function Search() {
   const values = ["a", "b", "c", "aa", "bb", "cc", "ab", "aabcde", "abcd"];
 
   function handleOnChange(e) {
-    setSearchValue(
-      (searchValue) => (searchValue = [...searchValue, e.target.value])
+    console.log(e);
+
+    setSearchValue((searchValue) => [ e.target.value]);
+
+    // console.log("search value", searchValue);
+
+    setSuggetion(
+      values.filter((ele, index) => {
+        return ele.includes(searchValue);
+      })
     );
-
-    console.log("search value", searchValue);
-
-    values.forEach((ele, index) => {
-      console.log(
-        ele,
-        ele.charAt(searchValue.length - 1),
-        ele.charAt(searchValue.length - 1) ===
-          searchValue[searchValue.length - 1],
-        searchValue[searchValue.length - 1],
-        searchValue
-      );
-    //   setSuggetion(["a"]);
-
-      if (
-        ele.charAt(searchValue.length - 1) ===
-        searchValue[searchValue.length - 1]
-      ) {
-        setSuggetion([...suggetion, ele]);
-        console.log(suggetion);
-      }
-    });
   }
 
   return (
