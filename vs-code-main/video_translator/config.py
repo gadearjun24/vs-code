@@ -161,7 +161,7 @@ class PipelineConfig:
 
     # Voice generation
     tts_temperature: float = 0.65
-    tts_speed: float = 1.0
+    tts_speed: float = 1.15
     tts_sentence_pause_ms: int = 220    # natural gap inserted between synthesized sentences
 
     # Per-segment duration sync (step13): right after a segment's audio is
@@ -177,7 +177,7 @@ class PipelineConfig:
     # translates, so in practice the required stretch is usually small.
     sync_segment_duration: bool = True
     tts_stretch_min_rate: float = 0.55   # don't speed up more than ~1.8x
-    tts_stretch_max_rate: float = 2.2    # don't slow down more than ~2.2x
+    tts_stretch_max_rate: float = 1.05    # don't slow down more than ~1.05x
     tts_post_denoise: bool = True        # light noisereduce pass on synthesized audio (quality vs. speed)
     # CPU threads used specifically during step13 synthesis (the heaviest
     # CPU step in the pipeline). 0 = use every core available - unlike the

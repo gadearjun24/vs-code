@@ -149,22 +149,23 @@ def build_prompt_text(job: dict, duration: float, retry: bool = False) -> str:
             "language, and identify that language."
         )
 
+    # --- UPDATED PROMPT SECTION ---
     text = (
         f"{transcribe_instruction}\n"
         f"Then translate the transcription into {target_lang_name}.\n\n"
-        "Context to make the translation sound natural when a voice actor speaks it aloud for "
-        "dubbing:\n"
+        "Context to make the translation sound natural when a voice actor speaks it aloud for dubbing:\n"
         f"- Speaker gender: {gender_phrase}. Where {target_lang_name} grammar marks gender "
         f"(pronouns, verb agreement, adjective agreement), phrase the translation the way that "
         f"speaker would naturally say it.\n"
-        f"- Spoken duration budget: this line takes about {duration:.2f} seconds to say in the "
-        f"original audio. Word the {target_lang_name} translation so it can be spoken naturally in "
-        "roughly that amount of time - prefer a concise, natural phrasing over a long literal one "
-        "if a literal translation would clearly take much longer to speak. Never drop meaning or "
-        "pad the sentence purely to hit the timing; timing is a soft preference, meaning is not.\n\n"
+        f"- Spoken duration budget (CRITICAL): This line takes exactly {duration:.2f} seconds to say "
+        f"in the original audio. You are a professional video dubbing translator. The {target_lang_name} "
+        f"translation MUST be concise and take the exact same amount of time to speak. Do NOT provide "
+        f"a wordy, literal translation. You must aggressively shorten the phrasing, using fewer words "
+        f"and matching the syllable count of the original audio, so the TTS model does not have to rush.\n\n"
         "Respond with ONLY one compact JSON object and nothing else - no markdown code fences, no "
         f"explanation, no extra text before or after it. Use exactly this shape:\n{JSON_SHAPE_HINT}"
     )
+    # ------------------------------
 
     if retry:
         text = (
