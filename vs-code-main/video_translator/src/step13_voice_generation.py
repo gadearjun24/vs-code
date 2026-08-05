@@ -1,7 +1,7 @@
 """
 Step 13 - Voice generation (translated text -> cloned speech per segment).
 
-Rewritten to fix three real production issues:
+Rewritten to fix four real production issues:
 
 1. "Namaskar dosto" plays then the line just stops. Long, multi-sentence
    translated text handed to a TTS model in a single call is a common
@@ -22,7 +22,19 @@ Rewritten to fix three real production issues:
 
 3. Background noise / unclear voice in the generated audio. Fix: a light
    `noisereduce` pass + peak normalization on the final concatenated
-   segment before it's written out.
+   segment before it's written out (toggle with `cfg.tts_post_denoise`).
+
+4. Sync drift against the source video. Fix: right after a segment's audio
+   is fully synthesized and cleaned up - BEFORE it's written to disk -
+   its duration is compared against that segment's own original
+   (diarized) start/end and pitch-preserving time-stretched to match it
+   exactly (`cfg.sync_segment_duration`, on by default). Every stored
+   .wav is therefore already frame-accurate to its own timeline slot, so
+   step15 doesn't have to reconcile drift across the whole track at the
+   end - it just places already-correct clips. Gemma 4 (step11) is also
+   told each segment's target duration when it translates, so in practice
+   the stretch this step applies is usually small and the result sounds
+   natural rather than obviously sped up or slowed down.
 
 Two backends, chosen automatically per target language:
 
@@ -36,10 +48,25 @@ Two backends, chosen automatically per target language:
   ~1100 languages, for targets XTTS doesn't speak. A small pitch shift is
   applied toward the source speaker's estimated register so the result
   still leans toward the right gender.
+
+CPU performance
+----------------
+This is the single heaviest CPU step in the pipeline (autoregressive
+synthesis, one full model forward pass per sentence), so unlike lighter
+steps it's allowed to use every core on the machine rather than the
+conservative shared cap the rest of the pipeline uses
+(`cfg.tts_cpu_threads`, default 0 = all cores) - nothing else runs
+concurrently with it, so there's no contention to protect against. All
+synthesis calls also run inside `torch.inference_mode()` to skip
+autograd bookkeeping entirely, and the model + reference audio are loaded
+exactly once and reused for every segment/chunk rather than being
+recreated. See `free_memory()` in `src/utils.py` for the RAM-hygiene
+pass this step (and every other step) runs on exit.
 """
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,8 +77,9 @@ import torch
 
 from config import PipelineConfig, XTTS_SUPPORTED_LANGUAGES, mms_tts_repo, xtts_char_limit
 from src.utils import (
-    denoise_array, get_logger, load_json, resolve_device, save_json,
-    split_into_tts_chunks, trim_silence_array,
+    configure_cpu_threads, denoise_array, free_memory, get_logger, load_json,
+    resolve_device, save_json, split_into_tts_chunks, time_stretch_to_duration,
+    trim_silence_array,
 )
 
 LOG = get_logger(__name__)
@@ -59,6 +87,11 @@ LOG = get_logger(__name__)
 XTTS_MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
 GENDER_PITCH_SHIFT = {"female": 3.0, "male": -2.0, "child": 5.0}
+
+# Free memory every N segments during the main loop, in addition to the
+# guaranteed cleanup when the step finishes - keeps peak RAM flat across a
+# very long video instead of only reclaiming it once at the very end.
+MEMORY_SWEEP_EVERY = 25
 
 
 def normalize_text(text: Optional[str]) -> str:
@@ -89,14 +122,38 @@ def assemble_chunks(chunk_arrays: List[np.ndarray], sr: int, pause_ms: int) -> n
     return np.concatenate(pieces)
 
 
-def post_process(audio: np.ndarray, sr: int) -> np.ndarray:
+def post_process(audio: np.ndarray, sr: int, denoise: bool = True) -> np.ndarray:
     if audio.size == 0:
         return audio
-    cleaned = denoise_array(audio, sr, prop_decrease=0.5)
+    cleaned = denoise_array(audio, sr, prop_decrease=0.5) if denoise else audio
     peak = float(np.max(np.abs(cleaned))) if cleaned.size else 0.0
     if peak > 1e-6:
         cleaned = (cleaned / peak) * 0.95
     return cleaned.astype(np.float32)
+
+
+def sync_to_original_duration(
+    audio: np.ndarray, sr: int, target_duration: Optional[float], cfg: PipelineConfig,
+) -> tuple[np.ndarray, Optional[float]]:
+    """
+    Time-stretch `audio` (pitch-preserved) so it matches the segment's own
+    original spoken duration exactly. Returns (audio, applied_rate) -
+    applied_rate is None when no stretch was applied (disabled, or no
+    timing data available for this segment).
+    """
+    if not cfg.sync_segment_duration or not target_duration or target_duration <= 0 or audio.size == 0:
+        return audio, None
+
+    current_duration = len(audio) / float(sr)
+    if current_duration <= 1e-6:
+        return audio, None
+
+    rate = current_duration / target_duration
+    stretched = time_stretch_to_duration(
+        audio, sr, target_duration,
+        max_rate=cfg.tts_stretch_max_rate, min_rate=cfg.tts_stretch_min_rate,
+    )
+    return stretched, rate
 
 
 class XTTSBackend:
@@ -110,22 +167,23 @@ class XTTSBackend:
         self.sr = self.tts.synthesizer.output_sample_rate
         LOG.info(f"XTTS-v2 loaded (output sample rate: {self.sr}).")
 
-    def synthesize(self, text: str, speaker_wav: Path, language: str, speed: float = 1.0) -> np.ndarray:
+    def synthesize(self, text: str, speaker_wav: Path, language: str, speed: float = 1.0) -> list:
         max_chars = xtts_char_limit(language)
         chunks = split_into_tts_chunks(text, max_chars=max_chars)
         if not chunks:
-            return np.zeros(0, dtype=np.float32)
+            return []
 
         chunk_arrays = []
-        for chunk in chunks:
-            wav = self.tts.tts(
-                text=chunk,
-                speaker_wav=str(speaker_wav),
-                language=language,
-                speed=speed,
-                split_sentences=False,  # we already split sentence-by-sentence ourselves
-            )
-            chunk_arrays.append(np.asarray(wav, dtype=np.float32))
+        with torch.inference_mode():
+            for chunk in chunks:
+                wav = self.tts.tts(
+                    text=chunk,
+                    speaker_wav=str(speaker_wav),
+                    language=language,
+                    speed=speed,
+                    split_sentences=False,  # we already split sentence-by-sentence ourselves
+                )
+                chunk_arrays.append(np.asarray(wav, dtype=np.float32))
 
         return chunk_arrays
 
@@ -155,15 +213,15 @@ class MMSFallbackBackend:
         shift = GENDER_PITCH_SHIFT.get((gender_hint or "").lower())
         chunk_arrays = []
 
-        for chunk in chunks:
-            inputs = self.tokenizer(chunk, return_tensors="pt")
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            with torch.inference_mode():
+        with torch.inference_mode():
+            for chunk in chunks:
+                inputs = self.tokenizer(chunk, return_tensors="pt")
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
                 waveform = self.model(**inputs).waveform
-            wav = waveform.squeeze().detach().cpu().numpy().astype(np.float32)
-            if shift:
-                wav = librosa.effects.pitch_shift(wav, sr=self.sr, n_steps=shift)
-            chunk_arrays.append(wav)
+                wav = waveform.squeeze().detach().cpu().numpy().astype(np.float32)
+                if shift:
+                    wav = librosa.effects.pitch_shift(wav, sr=self.sr, n_steps=shift)
+                chunk_arrays.append(wav)
 
         return chunk_arrays
 
@@ -175,6 +233,14 @@ def run(cfg: PipelineConfig) -> list:
     cfg.dir_generated_audio.mkdir(parents=True, exist_ok=True)
 
     device = resolve_device(cfg.device)
+
+    if device == "cpu":
+        # This is the heaviest CPU step in the pipeline and nothing else
+        # runs concurrently with it, so - unlike lighter steps sharing
+        # `cfg.cpu_threads` - it's allowed to claim every core available.
+        threads = configure_cpu_threads(cfg.tts_cpu_threads if cfg.tts_cpu_threads > 0 else (os.cpu_count() or 4))
+        LOG.info(f"CPU synthesis: using {threads} torch threads for step13.")
+
     use_xtts = cfg.target_lang in XTTS_SUPPORTED_LANGUAGES
 
     if use_xtts:
@@ -192,6 +258,7 @@ def run(cfg: PipelineConfig) -> list:
 
     generated = []
     started = time.time()
+    synced_count = clamped_count = 0
 
     for idx, seg in enumerate(conversation, start=1):
         segment_id = seg.get("segment_id")
@@ -227,7 +294,26 @@ def run(cfg: PipelineConfig) -> list:
                 raise RuntimeError("no audio produced (empty text after normalization)")
 
             merged = assemble_chunks(chunk_arrays, backend.sr, cfg.tts_sentence_pause_ms)
-            merged = post_process(merged, backend.sr)
+            merged = post_process(merged, backend.sr, denoise=cfg.tts_post_denoise)
+            natural_duration = round(len(merged) / backend.sr, 3)
+
+            original_start = seg.get("start")
+            original_end = seg.get("end")
+            target_duration = seg.get("duration")
+            if not target_duration and original_start is not None and original_end is not None:
+                target_duration = max(0.0, float(original_end) - float(original_start))
+
+            merged, stretch_rate = sync_to_original_duration(merged, backend.sr, target_duration, cfg)
+            if stretch_rate is not None:
+                synced_count += 1
+                if not (cfg.tts_stretch_min_rate <= stretch_rate <= cfg.tts_stretch_max_rate):
+                    clamped_count += 1
+                    LOG.warning(
+                        f"  {segment_id}: required stretch rate {stretch_rate:.2f}x exceeds the "
+                        f"configured [{cfg.tts_stretch_min_rate}, {cfg.tts_stretch_max_rate}] safety "
+                        f"range and was clamped - this line may still drift slightly at assembly."
+                    )
+
             sf.write(str(out_path), merged, backend.sr, subtype="PCM_16")
 
             record = {
@@ -241,10 +327,13 @@ def run(cfg: PipelineConfig) -> list:
                 "backend": "xtts_v2" if use_xtts else "mms_tts_fallback",
                 "gender": speaker_meta.get("gender"),
                 "final_audio": str(out_path),
-                "original_start": seg.get("start"),
-                "original_end": seg.get("end"),
-                "original_duration": seg.get("duration"),
+                "original_start": original_start,
+                "original_end": original_end,
+                "original_duration": target_duration,
+                "natural_duration_seconds": natural_duration,
                 "generated_duration_seconds": round(len(merged) / backend.sr, 3),
+                "synced_to_original_duration": stretch_rate is not None,
+                "duration_stretch_rate": round(stretch_rate, 4) if stretch_rate is not None else None,
                 "status": "ok",
             }
 
@@ -261,7 +350,20 @@ def run(cfg: PipelineConfig) -> list:
         generated.append(record)
         save_json(cfg.generated_audio_json, generated)
 
+        if idx % MEMORY_SWEEP_EVERY == 0:
+            free_memory()
+
+    if cfg.sync_segment_duration:
+        LOG.info(
+            f"Duration sync: {synced_count}/{len(generated)} segment(s) time-stretched to their "
+            f"original slot ({clamped_count} hit the stretch-rate safety clamp)."
+        )
+
     LOG.info(f"Voice generation done in {time.time() - started:.2f}s for {len(generated)} segments")
+
+    del backend
+    free_memory()
+
     return generated
 
 

@@ -17,13 +17,29 @@ step - plus a HuggingFace token for pyannote + Gemma 4).
 
 from __future__ import annotations
 
+import os
+
+# ---------------------------------------------------------------------------
+# Must happen BEFORE numpy/torch/scipy/librosa are imported by anything else
+# below (including src.utils, config, or any step module) - these libraries
+# size their BLAS/OpenMP thread pools once, the first time their native
+# backend is touched, so setting the env var after that point is too late to
+# have any effect. This alone is often the single biggest lever for CPU
+# speed on multi-core machines, since these libraries otherwise sometimes
+# default to conservative or badly-oversubscribed thread counts.
+# ---------------------------------------------------------------------------
+os.environ.setdefault("OMP_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("MKL_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("OPENBLAS_NUM_THREADS", str(os.cpu_count() or 4))
+os.environ.setdefault("NUMEXPR_NUM_THREADS", str(os.cpu_count() or 4))
+
 import argparse
 import sys
 import time
 from pathlib import Path
 
 from config import PipelineConfig, XTTS_SUPPORTED_LANGUAGES
-from src.utils import get_logger
+from src.utils import configure_cpu_threads, free_memory, get_logger
 
 LOG = get_logger("pipeline")
 
@@ -120,10 +136,12 @@ def main() -> int:
 
     check_target_language(cfg)
 
+    threads = configure_cpu_threads(cfg.cpu_threads)
     LOG.info(f"Input video : {cfg.input_video}")
     LOG.info(f"Target lang : {cfg.target_lang}")
     LOG.info(f"Work dir    : {cfg.work_dir}")
     LOG.info(f"Steps       : {args.from_step} -> {args.to_step}")
+    LOG.info(f"CPU threads : {threads} (torch); BLAS envs default to {os.cpu_count() or 4}")
 
     overall_start = time.time()
 
@@ -147,9 +165,18 @@ def main() -> int:
                 f"python run_pipeline.py --input {cfg.input_video} --target-lang {cfg.target_lang} "
                 f"--from-step {step_num} --to-step {args.to_step}"
             )
+            free_memory()
             return 1
 
         LOG.info(f"Step {step_num} finished in {time.time() - step_start:.2f}s")
+
+        # Release this step's model(s)/buffers (RAM and, if used, VRAM)
+        # before the next step starts, so it gets a clean baseline instead
+        # of competing with whatever the previous step left cached - see
+        # free_memory()'s docstring in src/utils.py for exactly what this
+        # does and why gc.collect() alone isn't enough.
+        del module
+        free_memory()
 
     LOG.info("")
     LOG.info("=" * 70)

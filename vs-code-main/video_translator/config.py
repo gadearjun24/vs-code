@@ -148,11 +148,14 @@ class PipelineConfig:
     background_gain_db: float = 0.0     # overall BGM gain in the final mix
 
     # Audio assembly / timing
-    # Natural speech pace is kept by default: generated lines are placed at
-    # their original timestamp but never sped up/slowed down to force-fit
-    # the original slot's duration (that's what caused the "chipmunk" sped-
-    # up dub). If a line runs long, later lines cascade forward just enough
-    # to avoid overlapping it, rather than distorting pitch/tempo.
+    # As of this version, each segment is already time-stretched to match
+    # its own original diarized duration right when it's generated (step13,
+    # see `sync_segment_duration` below) - so by the time step15 places
+    # segments on the timeline they should already fit their slot almost
+    # exactly. `stretch_audio_to_fit` below is now a step15-level SAFETY
+    # NET only (covers e.g. a segment generated with `sync_segment_duration
+    # =False`, or missing timing data) - leave it off; the real sync now
+    # happens once, at the source, in step13.
     stretch_audio_to_fit: bool = False
     min_gap_between_lines_seconds: float = 0.12
 
@@ -160,6 +163,28 @@ class PipelineConfig:
     tts_temperature: float = 0.65
     tts_speed: float = 1.0
     tts_sentence_pause_ms: int = 220    # natural gap inserted between synthesized sentences
+
+    # Per-segment duration sync (step13): right after a segment's audio is
+    # synthesized - BEFORE it's written to disk - its duration is compared
+    # against that segment's own original (diarized) start/end, and sped up
+    # or slowed down (pitch-preserving time-stretch) just enough to match
+    # it exactly. This replaces the old approach of only fixing sync at the
+    # very end (step15) across the whole track at once: fixing it per
+    # segment, at the source, means every stored .wav is already
+    # frame-accurate to its own slot, and step15 just has to place already-
+    # correct clips rather than reconcile drift after the fact. Gemma 4
+    # (step11) is also told each segment's target duration when it
+    # translates, so in practice the required stretch is usually small.
+    sync_segment_duration: bool = True
+    tts_stretch_min_rate: float = 0.55   # don't speed up more than ~1.8x
+    tts_stretch_max_rate: float = 2.2    # don't slow down more than ~2.2x
+    tts_post_denoise: bool = True        # light noisereduce pass on synthesized audio (quality vs. speed)
+    # CPU threads used specifically during step13 synthesis (the heaviest
+    # CPU step in the pipeline). 0 = use every core available - unlike the
+    # conservative shared `cpu_threads` cap above (meant for lighter steps
+    # running back-to-back), this step benefits from using the whole
+    # machine since nothing else runs at the same time.
+    tts_cpu_threads: int = 0
 
     # Output muxing
     # Keep original audio as a second track and burn or embed subtitles.

@@ -3,28 +3,24 @@ Step 15 - Audio assembly.
 
 Two things happen here:
 
-1. Every generated segment (step13) is placed at its original timestamp -
-   at its NATURAL, unmodified speaking speed. Earlier versions of this
-   step time-stretched each line to force it into exactly the original
-   slot's duration, which is what caused the "sped up / chipmunk" effect
-   when a translated line ran longer than the source line: compressing
-   audio in time to make it fit is a real, audible speed change, and it
-   never truncates a word either way - the whole line is always played in
-   full.
+1. Every generated segment (step13) is placed at its original timestamp.
+   As of the current step13, each segment's own .wav is *already*
+   time-stretched to match its original diarized duration exactly
+   (`cfg.sync_segment_duration`, on by default there) - so in the normal
+   case this step just places already-correct, already-synced clips back
+   to back and there's nothing left to reconcile.
 
-   Instead: lines are placed in chronological order. Each line starts at
+   This step still keeps its own chronological-placement safety net for
+   the cases step13's per-segment sync doesn't cover: each line starts at
    `max(its own original timestamp, the moment the previous line actually
-   finished + a small natural gap)`. A line is never pulled earlier than
-   its own timestamp, and never sped up/slowed down/cut - if a translation
-   runs long, only the *start* of later lines drifts forward to avoid
-   overlapping it, never the audio itself. This keeps sync tight in the
-   normal case (most lines have some silence after them) and degrades
-   gracefully (a little later, never distorted or clipped) in the rare
-   case a translation is much longer than the original line.
-
-   Set `cfg.stretch_audio_to_fit = True` if you'd rather have strict
-   timestamp alignment at the cost of occasional pitch-preserved
-   speed-up/down - off by default.
+   finished + a small natural gap)`, so a line is never pulled earlier
+   than its own timestamp, and - if `cfg.sync_segment_duration` was turned
+   off, or a segment is missing timing data, or a required stretch got
+   clamped by step13's safety range - a line that still runs long simply
+   pushes later lines forward slightly rather than overlapping or getting
+   cut off. Set `cfg.stretch_audio_to_fit = True` to also force-fit any
+   such leftover-drift lines here (pitch-preserved speed change); off by
+   default since step13 is now where sync is meant to happen.
 
 2. The background bed extracted in step04 (music/ambience/SFX, with the
    original speech removed) is mixed back in underneath the dubbed speech,
@@ -102,9 +98,14 @@ def place_segments(records: list, mix_sr: int, cfg: PipelineConfig, total_sample
     """
     Returns (speech_track, active_windows_seconds, stats).
 
-    Chronological, non-overlapping placement at natural speed. This is the
-    core fix for the "audio speeds up" bug: no resampling/time-stretching
-    happens here unless `cfg.stretch_audio_to_fit` is explicitly turned on.
+    Chronological, non-overlapping placement. Segments arriving here are
+    normally already time-stretched to their own original duration by
+    step13 (`cfg.sync_segment_duration`), so this is mostly just placing
+    already-correct clips at their timestamps; the drift-forward logic
+    below only kicks in for whatever step13 didn't fully resolve (sync
+    disabled, missing timing data, or a stretch that hit step13's safety
+    clamp). `cfg.stretch_audio_to_fit` additionally force-fits any such
+    leftover-drift line here - off by default.
     """
     speech_track = np.zeros(total_samples, dtype=np.float32)
     active_windows = []
@@ -186,14 +187,15 @@ def run(cfg: PipelineConfig) -> None:
 
     LOG.info(
         f"Speech placement: placed={stats['placed']} skipped={stats['skipped']} "
-        f"(natural speed - no time-stretch{' (except stretch_audio_to_fit lines)' if cfg.stretch_audio_to_fit else ''})"
+        f"(step13 pre-synced most segments to their original duration already"
+        f"{'; stretch_audio_to_fit safety net also active' if cfg.stretch_audio_to_fit else ''})"
     )
     if stats["drifted_lines"]:
         LOG.warning(
-            f"{stats['drifted_lines']} line(s) drifted later than their original timestamp "
-            f"(up to {stats['max_drift_seconds']}s) because earlier translated lines ran long. "
-            f"This keeps natural speech pace instead of speeding audio up - set "
-            f"cfg.stretch_audio_to_fit=True if you'd rather force-fit timestamps instead."
+            f"{stats['drifted_lines']} line(s) still started later than their original timestamp "
+            f"(up to {stats['max_drift_seconds']}s) - likely a segment step13 couldn't fully sync "
+            f"(sync disabled, missing timing data, or a stretch-rate clamp). Set "
+            f"cfg.stretch_audio_to_fit=True to force-fit these here too instead of letting them drift."
         )
 
     # Prevent clipping from overlapping speech before mixing with BGM.

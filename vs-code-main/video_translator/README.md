@@ -236,7 +236,7 @@ segment never crashes the whole run). Both fields land in
 `output/translations/translated.json` exactly like the old two-step
 pipeline's output did, so step12/13/14/15 downstream needed no changes.
 
-
+## 4. Why sentences no longer cut off or have odd pauses
 
 Handing a TTS model a whole multi-sentence paragraph in one call is a
 common cause of it truncating after the first clause, or leaving
@@ -257,52 +257,82 @@ truncates some languages or over-splits others. Step 13 now:
    `config.py`, default 220ms) instead of whatever gap the model happens
    to leave.
 3. Runs a light denoise + peak-normalize pass on the finished segment
-   before writing it out, cleaning up synthesis artifacts.
+   before writing it out, cleaning up synthesis artifacts (toggle with
+   `cfg.tts_post_denoise`, on by default).
 
-## 5. How BGM/SFX stay audible, and audio never speeds up or gets cut
+## 5. How every segment stays perfectly in sync with the video
 
-Step 4 (Demucs) splits the audio into a clean-speech track and a
-background bed (music/ambience/SFX) *before* diarization ever runs, so
-step 15 can mix the background bed back in underneath the dubbed speech
-later - ducked a little during active speech, full volume during silence,
-like a real voiceover mix - instead of discarding it the way a
-speech-only dub would.
+Each segment's audio is synced to its own original timing **right when
+it's generated, in step13** - not left until the final mix like earlier
+versions of this pipeline did:
 
-**Dubbed lines are placed at natural, unmodified speaking speed - never
-time-stretched to force-fit the original slot, and never truncated.**
-Translated text is very often longer or shorter than the source line, and
-compressing audio in time to cram it into the original slot's duration is
-an audible speed change (the "chipmunk" effect) - so by default this
-pipeline doesn't do that. Instead, step 15 places each line in
-chronological order: a line starts at `max(its own original timestamp,
-the moment the previous line actually finished + a small gap)`. A line is
-never pulled earlier than its own timestamp and the audio itself is never
-sped up, slowed down, or cut short - the whole translated sentence always
-plays in full. If an earlier translated line runs long, only the *start*
-of later lines drifts forward to avoid overlapping it; the pipeline logs a
-warning whenever a line drifts more than `DRIFT_WARNING_SECONDS` (0.75s)
-so you can see exactly where and how much. In the common case (most lines
-have some silence after them in the original video) there's no drift at
-all and timestamps stay exact.
+1. The chunked, cleaned-up audio for a segment (section 4 above) is
+   measured against that same segment's own original diarized duration
+   (`end - start` from step06/step11).
+2. If it doesn't match, `time_stretch_to_duration()` (pitch-preserving,
+   via `librosa.effects.time_stretch`) speeds it up or slows it down just
+   enough to fit that exact duration - clamped to a safety range
+   (`cfg.tts_stretch_min_rate` / `cfg.tts_stretch_max_rate`, default
+   0.55x-2.2x) so an unusually long or short translation is nudged toward
+   the target rather than distorted into something unnatural.
+3. *Then* the segment is written to disk - so `output/generated_audio/`
+   already contains frame-accurate clips, and `generated_audio.json`
+   records `natural_duration_seconds` (before stretch),
+   `generated_duration_seconds` (after), and `duration_stretch_rate` for
+   every segment so you can see exactly what happened.
 
-If you'd rather have strict timestamp alignment and are fine with
-occasional pitch-preserved speed changes instead, set
-`stretch_audio_to_fit = True` in `config.py` to restore the old
-force-fit behavior.
+This is on by default (`cfg.sync_segment_duration = True`) and is why
+sync issues are rare in practice: Gemma 4 (step11) is already told each
+segment's target duration when it translates and tends to phrase things
+to roughly fit, so the stretch step13 ends up applying is usually small
+and doesn't sound obviously sped up or slowed down.
 
-The final mix is written at the higher `hq_sample_rate` (default 44.1kHz,
-stereo) rather than the 16kHz mono rate used internally by the speech
-models, since this file is a deliverable, not a model input. Because
-lines are never truncated, the dubbed track can end up very slightly
-longer than the source video if translations ran long throughout - the
-final mux (step 16) doesn't use `-shortest`, so nothing gets cut off if
-that happens.
+Step15 (audio assembly) still keeps a chronological-placement safety net
+on top of this for anything step13's sync didn't fully resolve (disabled,
+missing timing data, or a stretch that hit the safety clamp): a line
+starts at `max(its own original timestamp, the moment the previous line
+actually finished + a small gap)`, so nothing overlaps or gets cut, and
+`cfg.stretch_audio_to_fit` (off by default) can force-fit any such
+leftover-drift line there too if you want stricter timestamp alignment
+than that safety net alone provides.
+
+## 5a. CPU speed & memory optimizations
+
+Two changes make full CPU runs meaningfully faster and lighter on RAM,
+without touching output quality:
+
+- **Thread tuning.** `run_pipeline.py` sets `OMP_NUM_THREADS`,
+  `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, and `NUMEXPR_NUM_THREADS` to
+  the machine's full core count *before* numpy/torch/scipy/librosa get
+  imported anywhere (these libraries size their thread pools once, at
+  first use - setting the env var later has no effect), and calls
+  `configure_cpu_threads(cfg.cpu_threads)` for torch's own thread pool on
+  top of that. Step13 (voice generation) - the single heaviest CPU step,
+  and the only one running at that point - additionally claims every core
+  for itself via `cfg.tts_cpu_threads` (default 0 = all cores) instead of
+  the lighter shared cap (`cfg.cpu_threads`, default `min(cpu_count, 4)`)
+  the rest of the pipeline uses to stay considerate of smaller machines.
+  All TTS synthesis calls also run inside `torch.inference_mode()`, which
+  skips autograd bookkeeping entirely since nothing here is ever trained.
+- **RAM hygiene between steps.** Every pipeline step loads its own model(s)
+  into local variables that normally get garbage-collected once that
+  step's `run(cfg)` returns - but reference cycles (common in torch
+  `nn.Module` graphs), CUDA's caching allocator, and CPython's own memory
+  allocator all tend to hold on to freed memory rather than returning it
+  immediately. `free_memory()` (`src/utils.py`) explicitly runs
+  `gc.collect()`, `torch.cuda.empty_cache()` (if a GPU was used), and
+  `malloc_trim(0)` (glibc/Linux) after every step in `run_pipeline.py`,
+  and again every 25 segments inside step13's own loop for long videos -
+  so each step, and each batch of segments, starts from a clean RAM
+  baseline instead of stacking on top of whatever the previous one left
+  cached.
 
 ## 6. CPU vs GPU
 
 Every step runs on CPU by default and only uses a GPU automatically when
 `torch.cuda.is_available()` is true (or you pass `--device cuda` /
-`--gemma-device cuda`). CPU guidance:
+`--gemma-device cuda`). See section 5a above for the thread-count and
+memory-hygiene tuning that applies regardless of device. CPU guidance:
 
 - Gemma 4 E2B (step 11, its own `.venv-gemma`) is the more capable option
   by default; it's a ~2B-parameter multimodal model and runs adequately on

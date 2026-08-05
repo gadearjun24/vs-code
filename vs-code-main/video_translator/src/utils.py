@@ -86,6 +86,70 @@ def configure_cpu_threads(n: int = 0) -> int:
     return threads
 
 
+def set_blas_thread_env(n: Optional[int] = None) -> int:
+    """
+    Set OMP_NUM_THREADS / MKL_NUM_THREADS / OPENBLAS_NUM_THREADS /
+    NUMEXPR_NUM_THREADS *before* numpy/torch/scipy/librosa get imported
+    anywhere in the process. These BLAS/OpenMP thread pools are sized once,
+    the first time each library touches its native backend - setting the
+    env var after that point has no effect, which is why this must run as
+    early as possible (run_pipeline.py calls it before importing anything
+    else). Left alone if the person already set these themselves, so an
+    explicit `OMP_NUM_THREADS=1 python run_pipeline.py ...` still works.
+    """
+    threads = n if n and n > 0 else (os.cpu_count() or 4)
+    for var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        os.environ.setdefault(var, str(threads))
+    return threads
+
+
+# ---------------------------------------------------------------------------
+# Memory hygiene between pipeline steps
+# ---------------------------------------------------------------------------
+
+def free_memory() -> None:
+    """
+    Best-effort release of RAM/VRAM between pipeline steps. Each step loads
+    its own (sometimes multi-GB) model(s) into local variables inside its
+    own `run(cfg)` function; once that function returns, those objects have
+    no more references and are eligible for garbage collection - but:
+
+      - reference cycles (common in torch nn.Module graphs with hooks)
+        aren't freed until a GC cycle actually runs, not just on refcount
+        drop, so an explicit `gc.collect()` here matters, not just letting
+        Python's normal refcounting handle it;
+      - CUDA's caching allocator keeps freed GPU memory reserved for reuse
+        rather than handing it back to the driver, which is normally what
+        you want *within* a step but not *between* two unrelated steps -
+        `torch.cuda.empty_cache()` releases it;
+      - CPython's own allocator likewise keeps freed heap arenas mapped
+        rather than returning them to the OS; on glibc Linux,
+        `malloc_trim(0)` asks it to actually give that memory back, which
+        is what makes the *next* step's RSS start from a clean baseline
+        instead of stacking on top of the previous step's peak usage.
+
+    Every step of this is wrapped in try/except - this is a best-effort
+    optimization, never something that should be allowed to fail a step.
+    """
+    import gc
+    gc.collect()
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+    try:
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception:
+        pass  # not glibc/Linux - nothing to do, gc.collect() above still ran
+
+
 # ---------------------------------------------------------------------------
 # JSON IO
 # ---------------------------------------------------------------------------
