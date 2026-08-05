@@ -1,0 +1,24 @@
+# ============================================================================
+# Minimal requirements for the standalone Gemma worker (.venv-gemma)
+# ============================================================================
+
+accelerate>=0.34
+transformers>=5.10.1
+huggingface_hub>=0.25
+
+# Audio
+numpy>=2.0
+scipy>=1.11
+soundfile>=0.12.1
+
+# Required by transformers AutoProcessor
+pillow
+
+# Install torch separately (CPU or CUDA build)
+# CPU:
+#   pip install torch torchvision torchaudio \
+#       --index-url https://download.pytorch.org/whl/cpu
+#
+# CUDA:
+#   pip install torch torchvision torchaudio \
+#       --index-url https://download.pytorch.org/whl/cu128
