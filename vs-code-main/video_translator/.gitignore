@@ -1,0 +1,12 @@
+.venv/
+.venv-gemma/
+__pycache__/
+*.pyc
+output/
+!output/.gitkeep
+input/*
+!input/.gitkeep
+*.wav
+*.mp4
+*.mkv
+.env

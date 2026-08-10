@@ -1,0 +1,93 @@
+# ============================================================================
+# Video Translation & Dubbing Pipeline - single requirements file
+# One venv runs the whole pipeline, including step11 (transcription +
+# translation) - Gemma 4 is served locally by Ollama (a separate, standalone
+# server process you install once - see README section 1b), so the only
+# thing this venv needs for it is the tiny `ollama` client library below.
+# No separate venv/transformers version needed for it anymore.
+# This exact set was installed together and verified with `pip check`
+# (no broken/conflicting requirements) as of Aug 2026.
+#
+# CPU-only install (recommended default, works everywhere):
+#   python -m venv .venv && source .venv/bin/activate
+#   pip install --upgrade pip
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# GPU (CUDA) install instead of the line above:
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+#   pip install -r requirements.txt
+#
+# torch/torchaudio are intentionally NOT pinned in this file - install the
+# CPU or CUDA build you need first (commands above), then this file installs
+# everything on top of it without overwriting your chosen build. Plain
+# `pip install torch torchaudio` (no index-url) also works and runs fine on
+# CPU-only machines; it's just a larger download.
+#
+# Then install + start Ollama and pull the Gemma 4 model (one-time,
+# separate from the venv above - see README section 1b):
+#   curl -fsSL https://ollama.com/install.sh | sh   # Linux; see README for macOS/Windows
+#   ollama pull gemma4:e2b
+#   ollama serve                                     # usually already running as a service
+# ============================================================================
+
+# --- Core / audio / video IO -------------------------------------------------
+ffmpeg-python>=0.2.0
+numpy>=2.0
+scipy>=1.11
+soundfile>=0.12.1
+librosa>=0.10.2
+
+# --- Voice activity detection -------------------------------------------------
+silero-vad>=5.1
+
+# --- Speech enhancement / denoising -------------------------------------------
+# noisereduce (pure Python + numpy/scipy, spectral gating) instead of
+# DeepFilterNet: DeepFilterNet's native extension (deepfilterlib) ships no
+# prebuilt wheels on PyPI, so it needs a Rust toolchain to compile locally,
+# and it hard-pins numpy<2.0, which conflicts with pyannote.audio 4.x below.
+# noisereduce avoids both problems while staying CPU-fast.
+noisereduce>=3.0.3
+
+# --- Speaker diarization -------------------------------------------------------
+# 4.x uses torchcodec instead of the old torchaudio.set_audio_backend API,
+# which was removed entirely in current torchaudio releases (3.x breaks on
+# import with modern torch/torchaudio - don't downgrade this).
+pyannote.audio>=4.0.1
+# Some pyannote model configs load through omegaconf/hydra-style config
+# objects; not every environment resolves it automatically as a transitive
+# dependency, so it's listed explicitly here.
+omegaconf>=2.3
+
+# --- Background music/SFX separation --------------------------------------------
+# Isolates speech from music/ambience/SFX before any speech model runs, which
+# both improves diarization/whisper/reference-clip accuracy and lets the
+# final mix preserve the original BGM/SFX under the dubbed voice track.
+# MIT-licensed (Meta AI Research). First run downloads the htdemucs model.
+demucs>=4.0.1
+
+# --- Transcription + translation (step11) --------------------------------------
+# Thin HTTP client for the local Ollama server, which is where Gemma 4
+# itself actually runs (see README section 1b) - this package does NOT
+# bundle any model weights or run inference itself, so it carries no
+# transformers/torch version requirement of its own.
+ollama>=0.4.0
+
+# --- Speaker gender/age/emotion models (step10) --------------------------------
+# Pinned below 5.0: coqui-tts (below) imports transformers.pytorch_utils
+# .isin_mps_friendly, which transformers removed in its 5.x release line.
+transformers>=4.57,<5.0
+accelerate>=0.34
+sentencepiece>=0.2.0
+protobuf>=4.25
+
+# --- Voice cloning text-to-speech ---------------------------------------------
+# Community-maintained fork (the original `TTS` PyPI package is abandoned and
+# breaks on Python 3.12+). Weights are under the Coqui Public Model License
+# (CPML) - free for research/personal use; check the license for commercial use.
+coqui-tts>=0.27.0
+
+# --- Misc ----------------------------------------------------------------------
+huggingface_hub>=0.25
+tqdm>=4.66
+
